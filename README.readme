@@ -1,0 +1,158 @@
+# PreEnroll — Java MVC + Swing + CSV
+
+ระบบลงทะเบียนเรียนล่วงหน้าสำหรับนักเรียน ม.ปลาย (ลองใช้ปี 1) ตามแนวคิด **MVC** พร้อม GUI (**Swing**)
+
+- **ภาษา/เฟรมเวิร์ก:** Java 8+ (แนะนำ 17), Swing
+- **Persistence:** ไฟล์ **CSV** (หลายไฟล์)
+- **สถาปัตยกรรม:** Model / Repository / Controller / View แยกเป็นแพ็กเกจ
+- **Authentication:** ผู้ใช้ 2 บทบาท (Admin / Student)
+
+---
+## คุณสมบัติเด่น
+- Login สำหรับ **Admin** และ **Student**
+- **สมัครนักเรียนใหม่** (สร้างรหัสนักเรียน 8 หลักขึ้นต้น `69xxxxxx` อัตโนมัติ)
+- หน้ารวม **นักเรียน (Admin)** ค้นหา/กรองตามโรงเรียน/เรียงตามชื่อหรืออายุ + เปิดดูประวัติ
+- **ประวัตินักเรียน (Student)**: ดูข้อมูลส่วนตัว วิชาที่ลงทะเบียนและเกรด
+- **ลงทะเบียนเรียน (Student)**: แสดงเฉพาะรายวิชาปี 1 ของหลักสูตร ที่ยังไม่ได้ลง และผ่าน **prerequisite** แล้ว
+- **กรอกเกรด (Admin)**: เลือกวิชา → แก้เกรดผู้ลงทะเบียน พร้อมตัวเลขจำนวนนักเรียนที่ลง
+- **Seed data** ครบตามโจทย์: ≥10 วิชา (มี prereq), ≥2 หลักสูตร (เทอม 1–2 ครบ), ≥10 นักเรียน, 1 Admin
+
+---
+## โครงสร้างโปรเจกต์
+```
+src/
+├─ app/
+│  └─ PreEnrollApp.java
+├─ controller/
+│  ├─ AdminController.java
+│  ├─ AuthController.java
+│  ├─ RegistrationController.java        
+│  └─ StudentController.java
+├─ model/
+│  ├─ RegisteredSubject.java
+│  ├─ Student.java
+│  ├─ Subject.java
+│  ├─ SubjectStructure.java
+│  └─ User.java
+├─ repository/
+│  ├─ CsvDataStore.java                  
+│  ├─ RegisteredSubjectRepository.java
+│  ├─ StudentRepository.java
+│  ├─ SubjectRepository.java
+│  ├─ SubjectStructureRepository.java
+│  └─ UserRepository.java
+├─ util/
+│  └─ CsvUtil.java                       
+└─ view/
+   ├─ AdminGradeEntryDialog.java
+   ├─ AdminGradeSelectDialog.java
+   ├─ AdminStudentListView.java
+   ├─ AdminViewStudentDialog.java
+   ├─ LoginView.java
+   ├─ NewStudentRegisterDialog.java      
+   ├─ RegisterDialog.java
+   └─ StudentProfileView.java
+```
+
+---
+## แต่ละโฟลเดอร์มีหน้าที่อะไร
+
+- **`app/`** — จุดเริ่มโปรแกรมและการบูตระบบ  
+  - `PreEnrollApp.java` : `main()` สร้าง DataStore/Repositories/Controllers แล้วเปิดหน้าจอ `LoginView`
+
+- **`controller/`** — ชั้น *Use case / Business logic*  
+  - `AuthController` : ล็อกอิน (ตรวจอายุ ≥ 15 ปีเมื่อเป็นนักเรียน)  
+  - `RegistrationController` : สมัครนักเรียนใหม่, ตรวจความถูกต้อง (อีเมล, อายุ, หลักสูตร), สร้างรหัสนักเรียนขึ้นต้น `69`  
+  - `StudentController` : ดึงโปรไฟล์/รายวิชาที่ลง, คำนวณรายวิชาที่ *ลงทะเบียนได้* (เช็ค prerequisite), ดำเนินการลงทะเบียน  
+  - `AdminController` : ค้นหา/กรอง/เรียงนักเรียน, นับจำนวนผู้ลงทะเบียนรายวิชา, ดึงรายชื่อผู้ลงทะเบียน, บันทึกเกรด  
+  > Controllers จะคุยกับ Repositories เท่านั้น และส่งข้อมูลให้ Views แสดงผล
+
+- **`model/`** — โดเมนโมเดล (POJOs)  
+  - **ภาพรวม:** คลาสธรรมดา (Plain Old Java Objects) ที่ไม่พึ่งพา UI หรือ CSV ตรง ๆ ใช้เป็นตัวแทนข้อมูลและกฎเบื้องต้นของโดเมน  
+  - **`Student`** — ฟิลด์หลัก: `studentCode` (8 หลักขึ้นต้น 69), `title`, `firstName`, `lastName`, `dob` (LocalDate), `school`, `email`, `curriculumCode`. เมธอด: `getAge()`, `fullName()`  
+    *ข้อกำหนด:* อายุต้อง ≥ 15 ปี (ตรวจตอนสมัคร/ล็อกอินใน Controller)  
+  - **`Subject`** — รหัสวิชา 8 หลัก (`0550xxxxx` สำหรับวิชาคณะ หรือ `9069xxxx` สำหรับศึกษาทั่วไป), `name`, `credits` (>0), `teacher`, `prereqCode` (อาจเป็น `null`).  
+  - **`SubjectStructure`** — โครงสร้างวิชาบังคับปี 1 ของแต่ละหลักสูตร: `curriculumCode` (8 หลัก ตัวแรกไม่ใช่ 0), `curriculumName`, `department`, `subjectCode`, `term` (1 หรือ 2).  
+  - **`RegisteredSubject`** — บันทึกการลงทะเบียน: `studentCode`, `subjectCode`, `grade` (A, B+, B, C+, C, D+, D, F หรือ `null`).  
+  - **`User`** — สำหรับการยืนยันตัวตน: `username` (admin หรืออีเมลนักเรียน), `password`, `role` (ADMIN/STUDENT), `studentCodeOrNull`.  
+  - **ความสัมพันธ์ข้อมูล:** `Student` 1—* `RegisteredSubject` *—1 `Subject`; `SubjectStructure` เชื่อม `curriculumCode` → `subjectCode`; `User(STUDENT)` 1—1 `Student`.  
+  - **การแม็ปกับ CSV:** แต่ละคลาสแม็ปกับไฟล์ CSV ตามหัวข้อ “โครงสร้างข้อมูล CSV” โดย Repository จะทำหน้าที่อ่าน/เขียน
+
+- **`repository/`** — การเข้าถึงข้อมูล (CSV persistence)  
+  - `CsvDataStore` : โหลด/บันทึก CSV **หลายไฟล์** + สร้าง seed data ครั้งแรก  
+  - `StudentRepository` : อ่าน/เพิ่มนักเรียน, ตรวจอีเมลซ้ำ, ดึงวิชาที่นักเรียนลง  
+  - `SubjectRepository` : อ่าน/ลิสต์รายวิชา  
+  - `SubjectStructureRepository` : ดึงโครงสร้างหลักสูตรปี 1 ตาม curriculum, สร้างรายการหลักสูตร (`listCurricula()`)  
+  - `RegisteredSubjectRepository` : ตรวจมีรายการลงทะเบียนอยู่แล้ว, เพิ่มการลงทะเบียน, ดึงผู้ลงทะเบียนรายวิชา, นับ, อัปเดตเกรด  
+  - `UserRepository` : ค้นผู้ใช้สำหรับล็อกอิน, ตรวจชื่อผู้ใช้ซ้ำ, เพิ่มผู้ใช้ใหม่
+
+- **`util/`** — ยูทิลิตี้ทั่วไป  
+  - `CsvUtil` : `parseLine()` สำหรับอ่าน 1 บรรทัด CSV ที่มีเครื่องหมายคำพูด/คอมมา และ `esc()` สำหรับเขียนค่าให้ปลอดภัย
+
+- **`view/`** — ชั้นนำเสนอ (Swing GUI)  
+  - `LoginView` : หน้าล็อกอิน + ปุ่ม **สมัครนักเรียนใหม่**  
+  - `NewStudentRegisterDialog` : ฟอร์มสมัครนักเรียนใหม่ → สำเร็จแล้วเข้าสู่ระบบอัตโนมัติ  
+  - `StudentProfileView` : หน้าแรกของนักเรียน แสดงข้อมูลส่วนตัว + วิชาที่ลงทะเบียน/เกรด  
+  - `RegisterDialog` : หน้าลงทะเบียน (แสดงเฉพาะวิชาที่ลงได้จริงตามหลักสูตร/วิชาบังคับก่อน)  
+  - `AdminStudentListView` : หน้ารวมนักเรียน (ค้นหา/กรอง/เรียง + ลิงก์ดูประวัติ)  
+  - `AdminViewStudentDialog` : หน้าประวัตินักเรียน (ดูรายละเอียด + วิชาที่ลง/เกรด)  
+  - `AdminGradeSelectDialog` → `AdminGradeEntryDialog` : เลือกวิชาและกรอกเกรดให้ผู้เรียน
+
+- **โฟลเดอร์ที่สร้างขณะรัน**  
+  - `data/` : เก็บไฟล์ข้อมูลจริงขณะใช้งาน → `users.csv`, `students.csv`, `subjects.csv`, `subject_structure.csv`, `registered_subjects.csv`  
+  - `out/` : ไฟล์ `.class` ที่คอมไพล์แล้ว (ลบได้ ไม่กระทบข้อมูล; สร้างใหม่ได้เมื่อคอมไพล์)
+
+---
+## การติดตั้ง & รัน
+> ต้องมี **JDK 8+** (แนะนำ JDK 17) และตั้งค่า encoding เป็น UTF‑8 เพื่อให้ข้อความไทยถูกต้อง
+
+### macOS/Linux
+```bash
+javac -encoding UTF-8 -d out $(find src -name "*.java")
+java -cp out app.PreEnrollApp
+```
+
+### Windows (PowerShell)
+```powershell
+Get-ChildItem -Recurse src -Filter *.java | ForEach-Object { $_.FullName } | `
+    Set-Content sources.txt
+javac -encoding UTF-8 -d out @sources.txt
+java -cp out app.PreEnrollApp
+```
+
+เมื่อรันครั้งแรก จะสร้างโฟลเดอร์ `data/` และ seed ไฟล์ CSV ให้อัตโนมัติ
+
+---
+## บัญชีตัวอย่าง
+- **Admin:** `admin` / `admin123`
+- **Student:** อีเมลของแต่ละคน (พาสเวิร์ด `1234`) — ระบบจะพิมพ์รายชื่ออีเมลตัวอย่างในคอนโซลตอนเริ่มโปรแกรม
+- ตัวอย่าง: arthit.suksan@example.com / 1234
+
+---
+## Business Rules
+- **อายุ ≥ 15 ปี** (ตรวจตอนนักเรียนล็อกอิน และตอนสมัครสมาชิกใหม่)  
+- ลงทะเบียน **สำเร็จ → กลับหน้าโปรไฟล์นักเรียน** ทันที  
+- ตรวจ **วิชาบังคับก่อน (prerequisite)**: ต้องมีเกรดผ่าน (A, B+, B, C+, C, D+, D) ในวิชาที่กำหนด จึงลงต่อไปได้  
+- จำนวนคนลงทะเบียนในแต่ละวิชา ≥ 0 (ตามโครงสร้างข้อมูล)  
+- รูปแบบรหัส:  
+  - **Student:** 8 หลักขึ้นต้น `69` (เช่น `69000001`)  
+  - **Subject:** คณะขึ้นต้น `0550`, ศึกษาทั่วไปขึ้นต้น `9069`  
+  - **Curriculum:** 8 หลัก ตัวแรก **ไม่ใช่ 0** (เช่น `80000001`)
+
+---
+## หน้าจอ (Views)
+- **Login**: เข้าสู่ระบบ + ปุ่ม “สมัครนักเรียนใหม่”  
+- **สมัครนักเรียนใหม่**: ใส่คำนำหน้า/ชื่อ/นามสกุล/วันเกิด/โรงเรียน/อีเมล/รหัสผ่าน/เลือกหลักสูตร → สมัครสำเร็จระบบล็อกอินให้เลย  
+- **Admin**: รวมนักเรียน, ดูประวัติ, กรอกเกรด  
+- **Student**: ประวัติ และลงทะเบียนเรียน (เฉพาะวิชาที่อนุญาต)
+
+---
+## โครงสร้างข้อมูล CSV
+ไฟล์จะอยู่ในโฟลเดอร์ `data/`
+- **users.csv**: `username,password,role,studentCodeOrNull`
+- **students.csv**: `studentCode,title,firstName,lastName,dob,school,email,curriculumCode`
+- **subjects.csv**: `code,name,credits,teacher,prereqCode`
+- **subject_structure.csv**: `curriculumCode,curriculumName,department,subjectCode,term`
+- **registered_subjects.csv**: `studentCode,subjectCode,grade`
+
+> ต้องการล้างข้อมูลทดลอง ให้ลบโฟลเดอร์ `data/` แล้วรันใหม่ ระบบจะ seed ให้ใหม่
